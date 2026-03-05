@@ -35,7 +35,7 @@ const CheckoutPage: React.FC = () => {
   const [userProfile, setUserProfile] = useState<any>(null);
 
   const subtotal = getCartTotal();
-  const shipping = subtotal > 500 ? 0 : 50;
+  const shipping = subtotal > 0 ? 0 : 0;
   const total = subtotal + shipping;
 
   useEffect(() => {
