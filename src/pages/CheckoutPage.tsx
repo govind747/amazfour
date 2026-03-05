@@ -54,12 +54,14 @@ const CheckoutPage: React.FC = () => {
 
   const fetchUserData = async () => {
     try {
+      if (!user?.id) return;
+
       // Get user profile
       const { data: profile } = await supabase
         .from('users')
         .select('*')
-        .eq('auth_id', user?.id)
-        .single();
+        .eq('auth_id', user.id)
+        .single() as { data: { id: string } | null };
 
       setUserProfile(profile);
 
@@ -69,7 +71,7 @@ const CheckoutPage: React.FC = () => {
           .from('user_addresses')
           .select('*')
           .eq('user_id', profile.id)
-          .order('is_default', { ascending: false });
+          .order('is_default', { ascending: false }) as { data: Address[] | null };
 
         setAddresses(addressesData || []);
         
@@ -152,40 +154,37 @@ const CheckoutPage: React.FC = () => {
       script.onload = () => {
         const options = {
           key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-          amount: total * 100, // Amount in paise
-          currency: 'INR',
-          name: 'RegionalMart',
-          description: 'Order Payment',
-          order_id: `order_${order.id}`,
+          amount: total * 100,
+          currency: "INR",
+          name: "RegionalMart",
+          description: "Order Payment",
+
           handler: async (response: any) => {
             try {
-              // Update order with payment details
               await supabase
-                .from('orders')
+                .from("orders")
                 .update({
-                  payment_status: 'completed',
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_order_id: response.razorpay_order_id
+                  payment_status: "completed",
+                  razorpay_payment_id: response.razorpay_payment_id
                 })
-                .eq('id', order.id);
+                .eq("id", order.id);
 
-              // Clear cart
               await clearCart();
 
-              // Redirect to success page
               navigate(`/order-success/${order.id}`);
             } catch (error) {
-              console.error('Error updating payment:', error);
-              alert('Payment successful but order update failed. Please contact support.');
+              console.error(error);
             }
           },
+
           prefill: {
             name: `${userProfile.first_name} ${userProfile.last_name}`,
             email: userProfile.email,
-            contact: userProfile.mobile || ''
+            contact: userProfile.mobile || ""
           },
+
           theme: {
-            color: '#F97316'
+            color: "#F97316"
           }
         };
 
