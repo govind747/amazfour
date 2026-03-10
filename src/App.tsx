@@ -40,14 +40,7 @@ import HelpPage from './pages/HelpPage';
 import ContactPage from './pages/ContactPage';
 
 // Placeholder components
-const OrdersPage = () => (
-  <div className="min-h-screen bg-gray-50 py-12">
-    <div className="max-w-4xl mx-auto px-4 text-center">
-      <h1 className="text-3xl font-bold text-gray-900 mb-4">Your Orders</h1>
-      <p className="text-gray-600">Your order history will appear here</p>
-    </div>
-  </div>
-);
+import OrdersPage from './components/Account/OrdersPage';
 
 
 function App() {

@@ -4,23 +4,16 @@ import { CreditCard, MapPin, Package, Shield } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { supabase } from '../lib/supabase';
+import { OrderService } from '../services/orderService';
+import { PaymentService } from '../services/paymentService';
+import { OrderAddress } from '../types/order';
 
-declare global {
-  interface Window {
-    Razorpay: any;
-  }
-}
-
-interface Address {
+interface UserProfile {
   id: string;
-  label: string;
-  address_line1: string;
-  address_line2: string;
-  city: string;
-  state: string;
-  country: string;
-  pincode: string;
-  is_default: boolean;
+  first_name: string;
+  last_name: string;
+  email: string;
+  mobile?: string;
 }
 
 const CheckoutPage: React.FC = () => {
@@ -28,23 +21,28 @@ const CheckoutPage: React.FC = () => {
   const { cartItems, getCartTotal, clearCart } = useCart();
   const navigate = useNavigate();
   
-  const [addresses, setAddresses] = useState<Address[]>([]);
-  const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
+  const [addresses, setAddresses] = useState<OrderAddress[]>([]);
+  const [selectedAddress, setSelectedAddress] = useState<OrderAddress | null>(null);
   const [paymentMethod, setPaymentMethod] = useState('razorpay');
   const [loading, setLoading] = useState(false);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [processingOrder, setProcessingOrder] = useState(false);
 
   const subtotal = getCartTotal();
-  const shipping = subtotal > 0 ? 0 : 0;
+  const shipping = subtotal > 500 ? 0 : 0;
   const total = subtotal + shipping;
 
   useEffect(() => {
+    console.log('[Checkout] Component mounted, user:', user?.id, 'cart items:', cartItems.length);
+    
     if (!user) {
+      console.log('[Checkout] No user found, redirecting to signin');
       navigate('/signin');
       return;
     }
 
     if (cartItems.length === 0) {
+      console.log('[Checkout] No cart items, redirecting to cart');
       navigate('/cart');
       return;
     }
@@ -53,38 +51,68 @@ const CheckoutPage: React.FC = () => {
   }, [user, cartItems, navigate]);
 
   const fetchUserData = async () => {
+    console.log('[Checkout] Fetching user data');
+    
     try {
       if (!user?.id) return;
 
       // Get user profile
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('users')
-        .select('*')
+        .select('id, first_name, last_name, email, mobile')
         .eq('auth_id', user.id)
-        .single() as { data: { id: string } | null };
+        .single();
 
+      if (profileError) {
+        console.error('[Checkout] Error fetching user profile:', profileError);
+        throw new Error(`Failed to fetch user profile: ${profileError.message}`);
+      }
+
+      if (!profile) {
+        console.error('[Checkout] No user profile found');
+        throw new Error('User profile not found');
+      }
       setUserProfile(profile);
+      console.log('[Checkout] User profile fetched:', profile);
 
-      if (profile) {
-        // Get addresses
-        const { data: addressesData } = await supabase
-          .from('user_addresses')
-          .select('*')
-          .eq('user_id', profile.id)
-          .order('is_default', { ascending: false }) as { data: Address[] | null };
+      // Get addresses
+      const { data: addressesData, error: addressError } = await supabase
+        .from('user_addresses')
+        .select(`
+          id,
+          label,
+          address_line1,
+          address_line2,
+          city,
+          state,
+          country,
+          pincode,
+          is_default
+        `)
+        .eq('user_id', profile.id)
+        .order('is_default', { ascending: false });
 
-        setAddresses(addressesData || []);
-        
-        // Set default address
-        const defaultAddress = addressesData?.find(addr => addr.is_default);
-        if (defaultAddress) {
-          setSelectedAddress(defaultAddress);
-        } else if (addressesData && addressesData.length > 0) {
-          setSelectedAddress(addressesData[0]);
-        }
+      if (addressError) {
+        console.error('[Checkout] Error fetching addresses:', addressError);
+        throw new Error(`Failed to fetch addresses: ${addressError.message}`);
+      }
+
+      const addresses = addressesData || [];
+      setAddresses(addresses);
+      console.log('[Checkout] Addresses fetched:', addresses);
+      
+      // Set default address
+      const defaultAddress = addresses.find(addr => addr.is_default);
+      if (defaultAddress) {
+        setSelectedAddress(defaultAddress);
+        console.log('[Checkout] Default address selected:', defaultAddress);
+      } else if (addresses.length > 0) {
+        setSelectedAddress(addresses[0]);
+        console.log('[Checkout] First address selected:', addresses[0]);
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
+      alert('Failed to load checkout data. Please try again.');
     }
   };
 
@@ -98,9 +126,27 @@ const CheckoutPage: React.FC = () => {
   };
 
   const createOrder = async () => {
+    console.log('[Checkout] Creating order');
+    
     if (!userProfile || !selectedAddress) return null;
 
     try {
+      const orderId = await OrderService.createOrder({
+        user_id: userProfile.id,
+        address_id: selectedAddress.id,
+        total_amount: total,
+        shipping_cost: shipping,
+        payment_method: paymentMethod,
+        shipping_method: 'standard'
+      });
+
+      console.log('[Checkout] Order created with ID:', orderId);
+      return orderId;
+    } catch (error) {
+      console.error('Error creating order:', error);
+      throw error;
+    }
+  };
       const { data: order, error } = await supabase
         .from('orders')
         .insert({
@@ -118,30 +164,75 @@ const CheckoutPage: React.FC = () => {
 
       if (error) throw error;
 
-      // Add order items
+  const addOrderItems = async (orderId: string) => {
+    console.log('[Checkout] Adding order items for order:', orderId);
+    
+    try {
       const orderItems = cartItems.map(item => ({
-        order_id: order.id,
         variant_id: item.variant_id,
         quantity: item.quantity,
         price: item.price_at_time
       }));
-
-      await supabase
-        .from('order_items')
-        .insert(orderItems);
-
-      return order;
+      
+      await OrderService.addOrderItems(orderId, orderItems);
+      console.log('[Checkout] Order items added successfully');
     } catch (error) {
-      console.error('Error creating order:', error);
+      console.error('[Checkout] Error adding order items:', error);
       throw error;
     }
   };
-
   const handleRazorpayPayment = async () => {
+    console.log('[Checkout] Starting Razorpay payment process');
+    
+    if (processingOrder) {
+      console.log('[Checkout] Order already processing, ignoring request');
+      return;
+    }
+
     try {
       setLoading(true);
+      setProcessingOrder(true);
 
       // Create order in database
+
+      const orderId = await createOrder();
+      if (!orderId) {
+        throw new Error('Failed to create order');
+      }
+
+      // Add order items
+      await addOrderItems(orderId);
+
+      // Open Razorpay checkout
+      await PaymentService.openRazorpayCheckout({
+        orderId: orderId,
+        amount: total,
+        currency: 'INR',
+        name: 'RegionalMart',
+        description: 'Order Payment',
+        prefill: {
+          name: `${userProfile.first_name} ${userProfile.last_name}`,
+          email: userProfile.email,
+          contact: userProfile.mobile || ''
+        },
+        onSuccess: async () => {
+          console.log('[Checkout] Payment successful, clearing cart and redirecting');
+          await clearCart();
+          // Small delay to ensure order is updated
+          setTimeout(() => {
+          navigate(`/order-success/${orderId}`);
+          }, 1000);
+        },
+        onError: async (error) => {
+          console.error('[Checkout] Payment failed:', error);
+          alert('Payment failed. Please try again.');
+        },
+        onDismiss: () => {
+          console.log('[Checkout] Payment dismissed by user');
+          setProcessingOrder(false);
+        }
+      });
+      
       const order = await createOrder();
       if (!order) throw new Error('Failed to create order');
 
@@ -203,48 +294,68 @@ const CheckoutPage: React.FC = () => {
         throw new Error('Failed to load Razorpay');
       };
     } catch (error) {
-      console.error('Error processing payment:', error);
+      console.error('[Checkout] Error processing payment:', error);
       alert('Payment failed. Please try again.');
     } finally {
       setLoading(false);
+      setProcessingOrder(false);
     }
   };
 
   const handleCashOnDelivery = async () => {
+    console.log('[Checkout] Starting COD order process');
+    
+    if (processingOrder) {
+      console.log('[Checkout] Order already processing, ignoring request');
+      return;
+    }
+
     try {
       setLoading(true);
+      setProcessingOrder(true);
 
-      const order = await createOrder();
-      if (!order) throw new Error('Failed to create order');
+      const orderId = await createOrder();
+      if (!orderId) {
+        throw new Error('Failed to create order');
+      }
 
-      // Update payment method
-      await supabase
-        .from('orders')
-        .update({
-          payment_status: 'pending',
-          payment_method: 'cod'
-        })
-        .eq('id', order.id);
+      // Add order items
+      await addOrderItems(orderId);
+
+      // Update order for COD
+      await OrderService.updateOrderForCOD(orderId);
+      console.log('[Checkout] Order updated for COD');
 
       // Clear cart
       await clearCart();
+      console.log('[Checkout] Cart cleared');
 
+      // Small delay to ensure order is updated
+      setTimeout(() => {
       // Redirect to success page
-      navigate(`/order-success/${order.id}`);
+      navigate(`/order-success/${orderId}`);
+      }, 500);
     } catch (error) {
-      console.error('Error placing order:', error);
+      console.error('[Checkout] Error placing COD order:', error);
       alert('Failed to place order. Please try again.');
     } finally {
       setLoading(false);
+      setProcessingOrder(false);
     }
   };
 
   const handlePlaceOrder = () => {
+    console.log('[Checkout] Place order clicked, payment method:', paymentMethod);
+    
     if (!selectedAddress) {
       alert('Please select a delivery address');
       return;
     }
 
+    if (processingOrder) {
+      console.log('[Checkout] Order already processing');
+      return;
+    }
     if (paymentMethod === 'razorpay') {
       handleRazorpayPayment();
     } else {
@@ -422,10 +533,10 @@ const CheckoutPage: React.FC = () => {
               {/* Place Order Button */}
               <button
                 onClick={handlePlaceOrder}
-                disabled={loading || !selectedAddress}
+                disabled={loading || !selectedAddress || processingOrder}
                 className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-3 px-4 rounded-lg font-semibold transition-colors"
               >
-                {loading ? 'Processing...' : `Place Order - ${formatPrice(total)}`}
+                {loading || processingOrder ? 'Processing...' : `Place Order - ${formatPrice(total)}`}
               </button>
 
               <p className="text-xs text-gray-500 text-center mt-3">
