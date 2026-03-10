@@ -46,6 +46,11 @@ export class OrderService {
       // Validate input data
       this.validateCreateOrderData(orderData);
       
+      // Generate order number for COD orders
+      const orderNumber = orderData.payment_method === 'cod' 
+        ? `RM${Date.now().toString().slice(-8)}` 
+        : undefined;
+      
       const orderPayload = {
         user_id: orderData.user_id,
         address_id: orderData.address_id,
@@ -54,7 +59,8 @@ export class OrderService {
         payment_method: orderData.payment_method,
         shipping_method: orderData.shipping_method || 'standard',
         payment_status: 'pending' as const,
-        order_status: 'processing' as const
+        order_status: 'processing' as const,
+        ...(orderNumber && { order_number: orderNumber })
       };
 
       console.log('[Order] Inserting order payload:', orderPayload);

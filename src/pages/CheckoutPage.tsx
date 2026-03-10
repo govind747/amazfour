@@ -201,7 +201,10 @@ const CheckoutPage: React.FC = () => {
         onSuccess: async () => {
           console.log('[Checkout] Payment successful, clearing cart and redirecting');
           await clearCart();
+          // Small delay to ensure order is updated
+          setTimeout(() => {
           navigate(`/order-success/${orderId}`);
+          }, 1000);
         },
         onError: async (error) => {
           console.error('[Checkout] Payment failed:', error);
@@ -250,8 +253,11 @@ const CheckoutPage: React.FC = () => {
       await clearCart();
       console.log('[Checkout] Cart cleared');
 
+      // Small delay to ensure order is updated
+      setTimeout(() => {
       // Redirect to success page
       navigate(`/order-success/${orderId}`);
+      }, 500);
     } catch (error) {
       console.error('[Checkout] Error placing COD order:', error);
       alert('Failed to place order. Please try again.');

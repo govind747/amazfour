@@ -124,7 +124,6 @@ export class PaymentService {
         currency: options.currency,
         name: options.name,
         description: options.description,
-        order_id: options.orderId,
         handler: async (response: RazorpayResponse) => {
           console.log('[Payment] Payment success response:', response);
           this.isCheckoutOpen = false;
@@ -135,7 +134,7 @@ export class PaymentService {
               payment_status: 'completed',
               order_status: 'confirmed',
               razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_order_id: response.razorpay_order_id
+              razorpay_order_id: response.razorpay_order_id || response.razorpay_payment_id
             });
             
             console.log('[Payment] Order updated successfully after payment');
